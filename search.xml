@@ -1,57 +1,377 @@
 <?xml version="1.0" encoding="utf-8"?>
-<search>
-  <entry>
-    <title><![CDATA[SQL优化技巧总结]]></title>
-    <url>%2F2018%2F01%2FSQL%E4%BC%98%E5%8C%96%E6%8A%80%E5%B7%A7%E6%80%BB%E7%BB%93.html</url>
-    <content type="text"><![CDATA[本文总结了在日常工作环境中（Hive等）的SQL使用和优化的技巧，不足之处请见谅。 WHERE子句中的连接顺序：Oracle采用自下而上的顺序解析WHERE子句,根据这个原理,表之间的连接必须写在其他WHERE条件之前, 那些可以过滤掉最大数量记录的条件必须写在WHERE子句的末尾。 SELECT子句中避免使用*:Select中每少提取一个字段，数据的提取速度就会有相应的提升。提升的速度还要看您舍弃的字段的大小来判断。COUNT()同理，建议换成COUNT(1);如果给定一个通配符，则返回表中所有的列，检索不需要的列通常会降低索引和应用程序的性能。Oracle在解析的过程中,会将’*’依次转换成所有的列名, 这个工作是通过查询数据字典完成的, 这意味着将耗费更多的时间。 去除表情符号：regexp_replace(km.name, &#39;([\000\\x{10000}-\\x{10ffff}\ud800-\udfff])&#39;, &#39;&#39;) 小写改成大写：SQL在解析的过程中关键字要全部转换为大写后再进行进一步的解析 小表JOIN大表：hive会将小表进行缓存。HIVE中在map端JOIN是将小表放入内存，在map端和大表逐一匹配。从而省去reduce。注：使用JOIN时候可以先在表内做好选择和过滤，这样减少形成最后大表的数量。 使用DISTINCT关键字：建议使用GROUP BY,因为无论检索字段是否是索引，GROUP BY 都比DISTINCT 快。(必须放在所有列名前面，不能部分使用DISTINCT) 排序: ORDER BY 要位于SELECT语句最后一条子句，并支持降序，例：ORDER BY prod_price DESC, prod_name ASC;先降序排序,升序排序 排名 123row_number() over ([partition col1] [order by col2])rank() over ([partition col1] [order by col2])dense_rank() over ([partition col1] [order by col2]) 它们都是根据col1字段分组，然后对col2字段进行排序，对排序后的每行生成一个行号，这个 行号从1开始递增 col1、col2都可以是多个字段，用‘,‘分隔 区别： 1）row_number：不管col2字段的值是否相等，行号一直递增，比如：有两条记录的值相等，但一 个是第一，一个是第二 2）rank：上下两条记录的col2相等时，记录的行号是一样的，但下一个col2值的行号递增N（N是 重复的次数），比如：有两条并列第一，下一个是第三，没有第二 3）dense_rank：上下两条记录的col2相等时，下一个col2值的行号递增1，比如：有两条并列第一，下一个是第二 聚合函数忽略NULL值：当聚合列值都是NULL值时，由于聚合函数忽略NULL值，因此，当计算聚合函数（max，min，avg和sum）的聚合值时，由于无值可以聚合，数据库引擎不能确定这些聚合函数的返回值，因此，数据库引擎返回NULL值。 聚合函数（max,min,sum,avg和count）忽略null值，但不代表聚合函数不返回null值：如果数据表为空表，或聚合列值都是null，那么max,min,sum,avg聚合函数返回null值，而count 聚合函数返回0。聚合函数的共性：Null values are ignored。 数据倾斜：表现：任务进度长时间维持在99%（或100%），查看任务监控页面，发现只有少量（1个或几个）reduce子任务未完成。因为其处理的数据量和其他reduce差异过大。 原因：map处理数据量的差异过大，导致数据不均匀的分配到各个reduce 解决方法(网上) 设置参数调节：hive.map.aggr=trueMap 端部分聚合，相当于Combinerhive.groupby.skewindata=true有数据倾斜的时候进行负载均衡，当选项设定为 true，生成的查询计划会有两个 MR Job。第一个 MR Job 中，Map 的输出结果集合会随机分布到 Reduce 中，每个 Reduce 做部分聚合操作，并输出结果，这样处理的结果是相同的 Group By Key 有可能被分发到不同的 Reduce 中，从而达到负载均衡的目的；第二个 MR Job 再根据预处理的数据结果按照 Group By Key 分布到 Reduce 中（这个过程可以保证相同的 Group By Key 被分布到同一个 Reduce 中），最后完成最终的聚合操作。 SQL语句调节： 如何Join：关于驱动表的选取，选用join key分布最均匀的表作为驱动表做好列裁剪和filter操作，以达到两表做join的时候，数据量相对变小的效果。 大小表Join：（小表定义：不大于1G的情况/1000条以下的记录条数称为小表，视实际情况而定-建议）使用join时小的维度表在前面(先进内存)，在map端完成reduce。 大表Join大表：把空值的key变成一个字符串加上随机数，把倾斜的数据分到不同的reduce上，由于null值关联不上，处理后并不影响最终结果。 count distinct大量相同特殊值count distinct时，将值为空的情况单独处理，如果是计算count distinct，可以不用处理，直接过滤，在最后结果中加1。如果还有其他计算，需要进行group by，可以先将值为空的记录单独处理，再和其他计算结果进行union。 group by维度过小：采用sum() group by的方式来替换count(distinct)完成计算。 特殊情况特殊处理：在业务逻辑优化效果的不大情况下，有些时候是可以将倾斜的数据单独拿出来处理。最后union回去。 HIVE动态分区设置(pt):SET hive.exec.dynamic.partition.mode=nonstrict;HIVE设置map/ruduce内存等参数：1234set mapreduce.map.memory.mb=4096;set mapreduce.reduce.memory.mb=4096;set mapreduce.map.cpu.vcores=4;set mapreduce.reduce.cpu.vcores=4; 一行转多行：lateral view用于和split、explode等UDTF一起使用的，能将一行数据拆分成多行数据(或者UDF，个人比较倾斜Python的UDF)；多行转一行 ：collect_set/collect_list返回去重的元素数组。 小文件的合并:大量的小文件导致文件数目过多，给HDFS带来压力，对hive处理的效率影响比较大，可以合并map和reduce产生的文件123hive.merge.mapfiles = true --是否和并 Map 输出文件，默认为 Truehive.merge.mapredfiles = false --是否合并 Reduce 输出文件，默认为 Falsehive.merge.size.per.task = 256*1000*1000 --合并文件的大小 注释：做项目中导数据时候要求hive中表文件存储为一个文件，还可以使用ORDER BY 1，这样只存在一个reduce，产生一个文件。 中间表使用：在做项目中经常会重复使用中间表，但是又不想建立一个物理表，这时候可以使用WITH table_name AS () SELECT ... FROM ...例子:123456WITH hhAS (SELECT ID FORM Dept WHERE name like '%苏州%') SELECT * FROM hh; 附：SQL执行优先级 参考书籍：《SQL必知必会》数据倾斜见博客]]></content>
-      <categories>
-        <category>数据分析基本工具</category>
-      </categories>
-      <tags>
-        <tag>SQL优化</tag>
-        <tag>SQL技巧</tag>
-        <tag>Hive</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title><![CDATA[excel使用技巧]]></title>
-    <url>%2F2018%2F01%2Fexcel.html</url>
-    <content type="text"><![CDATA[excel等是数据分析中的基本工具，是每一个数据相关从业者必备的技能之一，本文从此处出发，以excel函数等为入口，系统学习excel的相关技能，力求熟练并精通之，并在此处记录。 excel技巧 填充：3种方式：①拖拽填充柄 ② 双击填充柄 ③ 填充公式：选中目标单元格区域，按Ctrl确定；然后保证在全选情况下在第一个写入公式合键或者【开始-填充】下拉按钮-向下，进行填充。 分阶段填充，选中目标区域，定位/Ctrl+G组合键打开，定位空值确定；然后保证在全选情况下在第一个单元格中写入公式，然后Ctrl+Enter组合键就全部分阶段填充。 选中：excel中选中第一个单元格按住shift然后点最后一个单元格，即可全部选中当前目标区域。如果行数太多，可以使用Ctrl+Shift+向下加方向键，直接定位到列有值的最后一行，如果在按一下向下方向键则选择全部行。Ctrl+Shift+空格选中当前表中有连续值的目标区域。 引用格式： [工作簿名称]工作表名!单元格引用 文本和数字转换，数字转特定格式文本：TEXT(A1,”特定格式”)或者&amp;””或者CONCATENATE函数拼接字符；文本转数字：数据-分列 选数字等格式或者X1(乘1) ANSI编码：CHAR(10),&amp;CHAR(10)&amp;;如果要在单元格中显示出2行，可用如上拼接，然后点击开始-自动换行按钮，即可换行显示。 查找excel表中单元格字符，可以将该列复制到word中，查找Ctrl+H替换[!0-9]，剩下全部是数字，然后再copy至excel中。 常用函数 type函数：查看单元格value类型，1-数字，2-文本，4-逻辑值，16-错误值，64-数组常量；注意当单元格为空时候，type函数会将其认为是数值0处理，结果为1 大小写字母转换：小写—&gt;大写UPPER，大写-&gt;小写LOWER，首字母大写其余字母改为小写PROPER 截取字符函数：从左LEFT；从右RIGHT；从单元格任意位置截取字符串：MID(text,start_num,num_chars);这3个字符都是按字符数处理; 对指定小数位数舍入数值：FIXED(number，[decimals], [no_commas])，该函数默认是2位小数；即对小数位数直接舍去；而ROUND则是根据小数位数直接四舍五入得到最后的值。 查找字符FIND(find_test, within_text,[start_num]),返回从左到右方向第一次出现的位置；不存在则返回#VALUE；SEARCH函数语法类似，不区分大小写，允许使用通配符，但是FIND区分大小写，并不允许使用通配符； SUBSTITUTE(text,old_text,new_text,[instance_num])替换字符或字符串：第一个参数text是需要替换其中字符的文本或者单元格引用，第二个参数old_text是需要替代的文本；第三个参数new_text是用于替换old_text的文本，第四个参数可选，指定要替换第几次出现的旧字符串。REPLACE(old_text,start_num,num_chars,new_text)函数-将部分文本字符串替换为不同的文本字符串:例如REPLACE(B2,4,4,&quot;****&quot;) TEXT函数：格式化文本：TEXT(value, format_text);format_text格式化代码： 3个条件区段，并用半角分号(;)间隔;如下：[&gt;0];[&lt;0];[=0] 2个条件区段，并用半角分号(;)间隔;如下：[&gt;0];[&lt;0] 自定义条件:4区段：[条件1];[条件2];[不满足条件的其他部分];[文本];3区段：[条件1];[条件2];[不满足条件];=TEXT(B2,&quot;[&gt;85]良好;[&gt;75]合格;不合格&quot;)2区段：[条件];[不满足条件] 实例：=TEXT(TEXT(EDATE(TEXT(A$3,&quot;0!-00&quot;),ROW(A1)-1),&quot;emm&quot;),&quot;[&gt;&quot;&amp;A$6&amp;&quot;] ;0&quot;);EDATE计算出”2011-09”以后的指定月份的日期，然后根据ROW(A1)-1来生成来连续的区间的月份。 利用TEXT函数将日期转换成为中文格式的月份：=TEXT(A2,&quot;[DBnum1]m月&quot;) 格式有yyyymmdd TEXT格式化代码： 0代表原先值，!0代表0；WEEKDAY函数算出是周几,然后减5,周六/日则为1，2；否则负数和0强制为0，以下为实现函数公式:TEXT(WEEKDAY(DATE(2016,A3,20),2)-5,&quot;0;!0;!0&quot;) 逻辑判断：AND、OR与OR函数，例如=IF(AND(B2=&quot;一线&quot;, c2&gt;10), &quot;是&quot;,&quot;否&quot;)注意逻辑函数的写法 常用的IS函数： ISBLANK函数：是否空格 ISERROR函数：值为任意错误值 ISNA函数：值为#N/A错误值 ISNUMBER函数：值为数值 ISNONTEXT函数：值为不是文本的任一项 ISTECT函数：值为文本 ISEVEN函数：数字为偶数 ISODD函数：数字为奇数 转换和公约/倍数: 弧度和角度转换：a. 弧度转化为角度：DEGREES(angle) b. 角度转化为弧度：RADIANS(angle) 最大公约数：GCD(number1,[number2],..) 返回两个或多个整数的最大公约数、最小公倍数:LCM(number1,[number2],..) 返回两个或多个整数的最小公倍数： MOD 取余函数MOD(number,divisor) 取舍函数：CEILING函数：向上舍入；FLOOR函数：向下舍去；注意：这两个函数都是按照舍入基数的整数倍进行取舍；格式如下：significance为舍入基数 12CEILING(number,[significance])FLORR(number,[significance]) 判断是否为闰年：转换成日期的年份，与字符串”-2-29”连接，生产”2014-2-29”样式的字符串，如果该日期不存在，则将会按文本进行处理。字符串前加上负号，如果字符串是日期，则返回一个负数，否则返回错误值”#CALUE!”。在用COUNT判断是否为数字，如果是则为闰年，否则平年。 1IF(COUNT(-(YEAR(A2)&amp;"-2-29")),"闰年","平年") 日期函数： 计算指定月份的日期：开始日期之后几个月的日期EDATE(start_date, months) EOMONTH 函数返回指定月数之前或者之后的最后一天的日期。DAY返回某个日期在一个月的天数。 例子：计算本月总天数=DAY(EOMONTH(TODAY(),0)) DATEIF函数：计算两个日期之间的天数、月数或者年数 12DATEDIF(start_date, end_date, unit)#unit：Y-年，M-月，D-天数，MD日期中的天数差-忽略年月，YM日期中的月数差-忽略日年，YD日期中的天数差，忽略年 DATESTRING函数：返回指定日期的中文短日期 星期相关函数：WEEKDAY函数返回某个日期的一周中的第几天。 WEEKDAY(serial_number,[return_type]):return_type: 1-默认/数字1(星期日)~7(星期六); 2-数字0(一)~7(日) TEXT函数第二参数： 1234= TEXT(B1, "aaaa") #返回中文如"星期六"= TEXT(B1, "aaa") #返回中文星期简写如"六"= TEXT(B1, "dddd") #返回英文"Saturday"= TEXT(B1, "ddd") #返回英文"Sat" WEEKNUM函数：返回指定日期属于全年的第几周 WEEKNUM(serial_number, [return_type]) #return_type默认为2 使用数组公式：判断日期所在月份有几个星期日数组公式：不用填入{};F2进入编辑，编辑好后，再使用&lt;Ctrl+Shift+Enter&gt;进行数组公式计算。a) 首先提取出年月，使用&amp;拼接出{2015-2-1,2015-2-2...,2015-2-31}数组。b) 使用MOD函数除以7，周日的情况下为1。如果对于2015-2-30等不存在的日期则会返回错误值。c) 最后=1则周日情况下返回TRUE，否则(包括不等于1和错误值)则为0或者错误值。0除以TRUE为0，其他返回错误值#DIV/0！或者#VALUE！。d) 最后COUNT函数统计结果。 公式如下：=COUNT(0/(MOD(TEXT(A2,&quot;e-m&quot;)&amp;-ROW($1:$31),7)=1)) LOOKUP函数：查询列表中小与或者等于目标值的最大值匹配，然后在第三参数中相同位置的值 123LOOKUP(lookup_value,lookup_vector,[result_vector])#lookup_vector查询范围，result_vector第三参数中对应的位置的值LOOKUP(lookup_value,array) 返回A列最后一个非空单元格内容 123=LOOKUP(1,0/(A:A&lt;&gt;""),A:A)#本写法就构建一个由0和错误值#DIV/!组成的数组，再用比0大的1作为查找值，即可查找结果区域中最后一个满足条件的记录。#经典用法：=LOOKUP(1,0/(条件),目标区域或数组) INDIRECT引用函数： INDIRECT(ref_text,[a1]) 注: ref_text可以是文本，也可以是不同区域，例如INDIRECT({&quot;C1:C10&quot;,&quot;F2:F10&quot;}) 返回指定单元格/区域的行号ROW() 和列号COLUMN() 基本查找函数VLOOKUP：查询值要求必须位于查询区域中的首列 1234VLOOKUP(lookup_value,table_array,col_index_num,[rank_lookup])# 第一参数查找值，第二参数查找区域# 第三参数指定返回查询区域中的第几列值，超过查询列的总列数，将返回错误值#REF，小于1返回错误值#VALUE# 第四参数，0或FASLE为精确匹配方式，支持无序查找；1或者TRUE或省略，则使用的近似匹配方式，同时要求查询区域的首列按升序排序 VLOOKUP一些技巧： a) 逆向查询，通过CHOOSE函数绕开查询值位于查询区域的首列：``=VLOOKUP(F5,CHOOSE({1,2},D2:D10,B2:B10),2,0)`` CHOOSE函数使用常量数组{1,2}将查询值所在的D2:D10和返回值B2：B10整合成一个新的两列多行的内存数组 CHOSSE可以根据指定数字序号返回与其对应的数据值结果 b) 使用数组查询多个内容：选中结果区域``=VLOOKUP(G2,A:E,{3,5},)}`` 然后``&lt;Ctrl+Shift+Enter&gt;`` MATCH函数：在单元格区域中搜索指定项，返回该项在单元格区域中的相对位置MATCH(lookup_value,lookup_array,[match_type])match_type第三参数，0、1或者省略、-1分别代表精确匹配或者升序查找，降序查找模型 COUNT函数：COUNT(value1,[..value2]..用于计算包含数字的单元格以及参数列表中数字的个数COUNT实例-计算考核得分大于等于3的达标率 1&#123;=TEXT(COUNT(0/(C2:C11&gt;=3))/COUNT(C2:C11),"0.00%")&#125; 计算范围中不为空的单元格个数COUNTNTA(value1,[value2],..)计算空白单元格个数COUNTBLANK(range)判断某一年是否是闰年和平年 IF(COUNT(-(YEAR(A2)&amp;&quot;-2-29&quot;)),&quot;闰年&quot;,&quot;平年&quot;) COUNTIF函数：统计满足条件的单元格的数量COUNTIF(range,criteria), criteria可以使用通配符？-任意单个字符，*任何字符；如果要查找问号或星号，则在字符前输入波浪符号”~”,如：~？例子:检查重复身份证号码 12=IF(COUNTIF(B$2:B$11,B2&amp;"*")&gt;1,"是","")#excel的数字精度为15位，而身份证位18位，后3位视为0，所以COUNTIF函数的cirteria部分使用B2&amp;"",转化为文本格式。 频数统计函数FREQUENCY：统计数值在某个区域内的出现平吕，返回一个垂直数组 123FREQUENCY(data_array,bins_array)#data_array一组数值或者数值引用#bins_array间隔数组，可以无序，统计是按照间隔点的数值升序排列 众数MODE函数均值函数AVERAGE函数数组中对应元素相乘SUMPRODUCT函数：SUMPRODUCT(array1,[array2],[array3],...)求和函数SUM，同理也有SUMIF函数 快捷键 Ctrl+1打开单元格格式 Ctrl+L /Ctrl+T创建表格，这里指套用格式。 Alt+= 自动求和 Ctrl+`(在Tab键之上)组合键可以直接显示公式和普通模式的切换 使用名称：公式-&gt;名称管理器 或者 Ctrl+F3 2018年2月22日完 《Excel 函数与公式应用大全》]]></content>
-      <categories>
-        <category>数据分析基本工具</category>
-      </categories>
-      <tags>
-        <tag>excel</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title><![CDATA[金融模型-评分卡（一）]]></title>
-    <url>%2F2018%2F01%2F%E9%87%91%E8%9E%8D%E6%A8%A1%E5%9E%8B-%E8%AF%84%E5%88%86%E5%8D%A1%EF%BC%88%E4%B8%80%EF%BC%89.html</url>
-    <content type="text"><![CDATA[一. 数据描述 每个候选预测变量的统计特性和分布 1） 矩，如均值、众数和标准差 2） 变化率的基本统计指标 3） 均值，分位数：如第一和第三个四分位数：变量中某值的频率，并计算累计频率 4） 极端值，最大值和最小值；范围 如何判定极端值：根据差异；① 正常取值范围② 建立具有特定函数形式的模型，并用数据拟合该模型，严重偏离并视为极端值③ 使用聚类算法分成很多较小的子集，即成簇；只包含最小数量的观测值的簇被认定为极端值④ 依靠决策树发现包含少量观测值的持续节点 处理：① 大多数情况极端值值或被删除或被重置为总体中的经典值&emsp;② 极端值的数量特别大时候进行分群(segments) 变量间是否存在关联性或相关性 1）建模的变量之间不能有较强的相关性，特别是logistic回归方法，最好使用因子分析和主成分分析进行降维找出最适合的变量建模。 2）相关性：皮尔森相关系数、斯皮尔曼相关系数(取值的等级：顺序) 皮尔森相关系数反应两个变量相似程度，变量的标准差不能为0，数据服从正态分布，数据至少在逻辑范围内是等距的。（有线性相关的概念） 斯皮尔曼相关系数是无参数（与分布无关）的检验方法，度量变量之间的联系的强弱。 变量中的缺失值和极端值，并评估其影响 金融中的正常和违约的分布情况 变量分段后统计违约和正常的频率 二. 建模方法-逻辑回归logistic构建logistic回归模型:h_θ(x)= \frac{1}{1+e^{(-β^Tx)}}其中， y= \frac{1}{1+e^{(-x)}}被称为sigmoid函数。sigmoid的函数图形如下： 模型拟合统计量评估模型中所有自变量对模型的贡献：（似然函数值） -2ln(L_1)= -2[y_iln(π_i) + (1-y_i)ln(1-π_i)]同时，为惩罚包含大量自变量的模型，制定了两个标准-赤池信息准则(AIC)和贝叶斯信息尊则(BIC)/又称舒尔茨准则(SC)：1) AIC: AIC = -2ln(L1) + 2r注：r是对模型复杂性惩罚机制，表现为模型参数数量r的形式，r是样本规模对数的比例2) SC/BIC： SC = -2ln(L1) + rln(n)粗分类和WOE1) 名义变量的WOE证据权重(Weight of Evidence,WOE)转换可以将logistic回归模型转变为标准的评分卡格式。其实，WOE是对原始变量的一种编码形式，主要是对变量进行分组（又称为离散化、分箱等）处理，计算WOE值。对于一个名义(类别)变量的类别i，或连续变量的某个段，WOE定义为 WOE_i = ln[\frac{Bad\ Distribution_i}{Good\ Distribution_i}]同时正常和违约的分布分别定义为： Good Distibution_i = \frac{Number\ of\ Good_i}{Total\ Number\ of\ Good} Bad Distibution_i = \frac{Number\ of\ Bad_i}{Total\ Number\ of\ Bad}最终，使用n代表数量，0代表违约，1代表正常，.代表全部；即类别$x_i$的WOE可以表示为： WOE(x_i) = ln\left[ \frac{n_{i0}/n_{.0}}{n_{i1}/n_{.1}} \right]从如上公式可以发现WOE就是第i类中违约与正常的比率与整个样本中违约与正常比率的比值的对数，其目的是衡量第i类对违约与正常的比率的影响程度，即第i类（每一组中）自变量对目标变量的影响。 注意：该类别中的违约和正常的比值和全部样本中的比值的比值，由于外边有对数函数（ln），因此就是在该类别中的违约和正常的比值，和全部样本的差异（ln：里除外减，减去）；这种差异越大，这个类别/分组的样本的正确区分的可能性就越大。 因此，将名义变量x的WOE重新表述为: WOE(x) = \delta_1WOE_1+ \delta_2WOE_2 + ... + \delta_rWOE_r其中，$\delta_1 … \delta_r$是二元虚拟变量，即对于所有的$j=1,….,r$，如果x的取值为第j类（$x_j$），则$x_j=1$；否则，$x_j = 0$。因此，针对名义变量，用一个变量的WOE代表该变量的各个类别，得到唯一的模型参数WOE(x);构建模型的变量可以视情况用其WOE值代替。2) 连续变量的WOE将数值分段，得到新的分段数据用于WOE计算。使用方法有决策树算法等。 信息值 Information Value(IV)IV衡量一个变量的信息量（和信息熵相似，但趋势未必一致），其决定自变量对目标变量的影响程度。因此IV可用于自变量筛选,IV值越大，改变了对模型的目标变量贡献越大，越应该被选入构建模型的变量列表中。 IV_i = (Bad Distibution_i - Good Distibution_i) * ln(\frac{Bad Distibution_i}{Good Distibution_i})IV = \sum_{k=0}^nIV_iIV有如下特点： 1. 对于某个变量的分组，违约/正常的比率与整体的样本的违约/正常的比率相差越大，IV越高，否则IV越小 2. 极端情况，IV=0，即分组下和整体的样本情况下违约/正常的比率相等。 2. IV的取值范围为：[0,+∞) 变量选择的方法现有的方法：使用所有变量、正向选择:添加最优变量、逆向选择：使用所有变量对模型拟合，逐步移除最差的变量、 逐步选择：正向+逆向的结合，正向增加最有的变量，逆向选择移出最差的变量。当前常用的做法。 模型评估评估方法：混合矩阵，ROC曲线，灵敏度： Sensitivity = \frac{TP}{TP + FN}特殊性： Specificity = \frac{TN}{TN + FP}三. 评分卡刻度和实施标准评分卡格式基本上都是每个变量遵循一系列IF-THEN法则。总分是评分卡所有变量的贡献之和。违约的概率是p，那正常的概率为1-p，因此， Odds = \frac{p}{1-p} p = \frac{Odds}{1 + Odds}评分卡的分值表示为： Score = A - Blog(Odds)其中，A和B为常数，违约概率越低，得分越高。 log(Odds) = \beta_0 + \beta_1x_1 + \beta_2x_2 + ... + \beta_px_p其中，用于建模参数拟合模型可以得到模型参数$\beta_0$(截距),$\beta_1,\beta_2, …, \beta_p$假设 在某个特定的比率$\theta_0$设定特定的预期分值$P_0$ 制定$\theta_0$比率减小一半时翻番的分数值(PDO)P_0 = A - Blog(\theta_0)P_0 + PDO = A - Blog(\frac{\theta_0}{2})解出：B = \frac{PDO}{log(2)}A = P_0 + Blog(\theta_0)此外，设置临界值水平：阈值 四. 其他 检测报告：评估和监测评分卡表现的情况。 拒绝演绎：对于不符合条件的直接拒绝，并给出具体原因。 参考资料： 信用卡风险评分卡研究基于SAS的开发与实施 Mamdouh著]]></content>
-      <categories>
-        <category>信贷</category>
-      </categories>
-      <tags>
-        <tag>评分卡</tag>
-        <tag>逻辑回归</tag>
-        <tag>logistic</tag>
-        <tag>信用卡评分</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title><![CDATA[2018计划]]></title>
-    <url>%2F2018%2F01%2F2018%E8%AE%A1%E5%88%92.html</url>
-    <content type="text"><![CDATA[2018计划1.分析报告：a 爬虫：数据获取,大众点评.美团/头条数据 excel ppt精通使用，软实力excel做熟练的数据分析。 具有做一个完整的分析报告的能力，从数据的角度诠释一个行业。运营一个博客公众号之类，维持周更，行业内具有一定的影响力。&emsp;&emsp;&emsp; 2.机器学习 自然语言处理(NLP) b 以tensflow为代表的深度学习 常用的算法：SVM 集成模型(Ensemble Models)等 信贷模型：信用卡模型等 b ++MOOC课程++：至少2门 神经网络和深度学习 机器学习技法-国立台湾大学 机器学习-李弘毅2017Fall ==理论推导==，==编程实现==，实践很重要 3.其他事宜 以前买的书看完-ML/金融/心理学/中医 少说多做，慎言慎行，学会拒绝，坚守本心。 培养摄影爱好，看不一样的世界。 金融/经济/理财/心理学方面的知识截至时间 a:一季度3月 b:二季度6月 c:3季度9月 d：4季度12月 大写提前一个月 4.书籍： 待看书籍 《统计自然语言处理基础》 2018-01-29 注：略读 《PYTHON自然语言处理中文翻译/NLTK》 《模式识别与机器学习》 《深度学习》 《信用风险评分卡研究》 2018-01-09 《流畅的python2015》 2018-02-01 略读 流畅的python略读了前7章，该书适合作为工具书，以后有需求可以对某一个块知识点进行研读；涉及对象、迭代器、多线程、设计模式等 《Spark》等/ 《Java编程基础》第10版上 《hands-On Machine Learning with Scikit-learn &amp; TensorFlow》 《推荐系统 技术、评估及高效算法》 2018-03-14 看了前6章，略读，看不懂 excel函数与公式应用大全/VBA “错误”的行为/ 国富论上 下 摄影书籍提高审美 2017回顾 顺利毕业, 工作，对业务数据有更深入的理解。 阅读完书籍：看书： ML：《机器学习周志华，统计学习方法李航，数据挖掘：概念与技术，Effective Python，tensflow谷歌，excel2013透视表，精通Python网络爬虫，用Python写网络爬虫，利用Python进行数据分析》 F:《生活中的投资学，基金》 S:《抗得住世界就是你的, 浮生六记》 MOOC: ML-NG 信贷模型小白 成为摄影小白2017总结：工作效率不高，很多想做的事情没有做下去，实践并不多，执行不彻底。 纪实 2018Q1：涉及跨年，年前书差不多了，excel和爬虫要在这个Q1解决，然后一门MOOC（网易云课堂）。记录时间：2018-02-01 21点]]></content>
-      <categories>
-        <category>规划</category>
-      </categories>
-      <tags>
-        <tag>计划</tag>
-      </tags>
-  </entry>
-  <entry>
-    <title><![CDATA[博客第一篇]]></title>
-    <url>%2F2018%2F01%2Ffisrtblog.html</url>
-    <content type="text"><![CDATA[开篇&emsp;2018-01-01开通博客，希望新年新气象！&emsp;同时也希望自己不断努力，不要放弃，实现自己价值。]]></content>
-  </entry>
+<search> 
+  
+    
+    <entry>
+      <title><![CDATA[SQL优化技巧总结]]></title>
+      <url>/2018/01/SQL%E4%BC%98%E5%8C%96%E6%8A%80%E5%B7%A7%E6%80%BB%E7%BB%93.html</url>
+      <content type="html"><![CDATA[<p>本文总结了在日常工作环境中（Hive等）的SQL使用和优化的技巧，不足之处请见谅。</p>
+<h4 id="WHERE子句中的连接顺序："><a href="#WHERE子句中的连接顺序：" class="headerlink" title="WHERE子句中的连接顺序："></a>WHERE子句中的连接顺序：</h4><p>Oracle采用自下而上的顺序解析WHERE子句,根据这个原理,表之间的连接必须写在其他WHERE条件之前, 那些可以过滤掉最大数量记录的条件必须写在WHERE子句的末尾。</p>
+<h4 id="SELECT子句中避免使用"><a href="#SELECT子句中避免使用" class="headerlink" title="SELECT子句中避免使用*:"></a>SELECT子句中避免使用<code>*</code>:</h4><p>Select中每少提取一个字段，数据的提取速度就会有相应的提升。提升的速度还要看您舍弃的字段的大小来判断。COUNT(<em>)同理，建议换成COUNT(1);如果给定一个通配符</em>，则返回表中所有的列，检索不需要的列通常会降低索引和应用程序的性能。Oracle在解析的过程中,会将’*’依次转换成所有的列名, 这个工作是通过查询数据字典完成的, 这意味着将耗费更多的时间。</p>
+<h4 id="去除表情符号："><a href="#去除表情符号：" class="headerlink" title="去除表情符号："></a>去除表情符号：</h4><p><code>regexp_replace(km.name, &#39;([\000\\x{10000}-\\x{10ffff}\ud800-\udfff])&#39;, &#39;&#39;)</code></p>
+<h4 id="小写改成大写："><a href="#小写改成大写：" class="headerlink" title="小写改成大写："></a>小写改成大写：</h4><p>SQL在解析的过程中关键字要全部转换为大写后再进行进一步的解析</p>
+<h4 id="小表JOIN大表："><a href="#小表JOIN大表：" class="headerlink" title="小表JOIN大表："></a>小表JOIN大表：</h4><p>hive会将小表进行缓存。HIVE中在map端JOIN是将小表放入内存，在map端和大表逐一匹配。从而省去reduce。<br>注：使用JOIN时候可以先在表内做好选择和过滤，这样减少形成最后大表的数量。</p>
+<h4 id="使用DISTINCT关键字："><a href="#使用DISTINCT关键字：" class="headerlink" title="使用DISTINCT关键字："></a>使用DISTINCT关键字：</h4><p>建议使用GROUP BY,因为无论检索字段是否是索引，GROUP BY 都比DISTINCT 快。(必须放在所有列名前面，不能部分使用DISTINCT)</p>
+<h4 id="排序"><a href="#排序" class="headerlink" title="排序:"></a>排序:</h4><ol>
+<li>ORDER BY 要位于SELECT语句最后一条子句，并支持降序，例：ORDER BY prod_price DESC, prod_name ASC;先降序排序,升序排序</li>
+<li><p>排名</p>
+ <figure class="highlight stylus"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="title">row_number</span><span class="params">()</span></span> over ([partition col1] [<span class="attribute">order</span> by col2])</span><br><span class="line"><span class="function"><span class="title">rank</span><span class="params">()</span></span> over ([partition col1] [<span class="attribute">order</span> by col2])</span><br><span class="line"><span class="function"><span class="title">dense_rank</span><span class="params">()</span></span> over ([partition col1] [<span class="attribute">order</span> by col2])</span><br></pre></td></tr></table></figure>
+<p> 它们都是根据col1字段<strong>分组</strong>，然后对col2字段进行排序，对排序后的每行生成一个行号，这个   行号从1开始递增<br> col1、col2都可以是多个字段，用‘,‘分隔<br> 区别：<br> 1）row_number：不管col2字段的值是否相等，行号一直递增，比如：有两条记录的值相等，但一  个是第一，一个是第二<br> 2）rank：上下两条记录的col2相等时，<strong>记录的行号是一样</strong>的，但下一个col2值的行号递增N（N是  重复的次数），比如：有两条并列第一，下一个是第三，没有第二<br> 3）dense_rank：上下两条记录的col2相等时，下一个col2值的行号递增1，比如：有两条并列第一，下一个是第二</p>
+</li>
+</ol>
+<h4 id="聚合函数忽略NULL值："><a href="#聚合函数忽略NULL值：" class="headerlink" title="聚合函数忽略NULL值："></a>聚合函数忽略NULL值：</h4><p>当聚合列值都是NULL值时，由于聚合函数忽略NULL值，因此，当计算聚合函数（max，min，avg和sum）的聚合值时，由于无值可以聚合，数据库引擎不能确定这些聚合函数的返回值，因此，数据库引擎返回NULL值。 聚合函数（max,min,sum,avg和count）忽略null值，但不代表聚合函数不返回null值：如果数据表为空表，或聚合列值都是null，那么max,min,sum,avg聚合函数返回null值，而count 聚合函数返回0。聚合函数的共性：Null values are ignored。</p>
+<h4 id="数据倾斜："><a href="#数据倾斜：" class="headerlink" title="数据倾斜："></a><strong>数据倾斜</strong>：</h4><p>表现：任务进度长时间维持在99%（或100%），查看任务监控页面，发现只有少量（1个或几个）reduce子任务未完成。因为其处理的数据量和其他reduce差异过大。<br> 原因：map处理数据量的差异过大，导致数据不均匀的分配到各个reduce</p>
+<blockquote>
+<h5 id="解决方法-网上"><a href="#解决方法-网上" class="headerlink" title="解决方法(网上)"></a>解决方法(网上)</h5><ol>
+<li><strong>设置参数调节</strong>：<br><code>hive.map.aggr=true</code><br>Map 端部分聚合，相当于Combiner<br><code>hive.groupby.skewindata=true</code><br>有数据倾斜的时候进行负载均衡，当选项设定为 true，生成的查询计划会有两个 MR Job。第一个 MR Job 中，Map 的输出结果集合会随机分布到 Reduce 中，每个 Reduce 做部分聚合操作，并输出结果，这样处理的结果是相同的 Group By Key 有可能被分发到不同的 Reduce 中，从而达到负载均衡的目的；第二个 MR Job 再根据预处理的数据结果按照 Group By Key 分布到 Reduce 中（这个过程可以保证相同的 Group By Key 被分布到同一个 Reduce 中），最后完成最终的聚合操作。</li>
+<li><strong>SQL语句调节</strong>：</li>
+</ol>
+<ul>
+<li>如何Join：<br>关于驱动表的选取，选用join key分布最均匀的表作为驱动表<br>做好列裁剪和filter操作，以达到两表做join的时候，数据量相对变小的效果。</li>
+<li>大小表Join：<br>（小表定义：不大于1G的情况/1000条以下的记录条数称为小表，视实际情况而定-建议）<br>使用join时小的维度表在前面(先进内存)，在map端完成reduce。</li>
+<li>大表Join大表：<br>把空值的key变成一个字符串加上随机数，把倾斜的数据分到不同的reduce上，由于null值关联不上，处理后并不影响最终结果。</li>
+<li>count distinct大量相同特殊值<br>count distinct时，将值为空的情况单独处理，如果是计算count distinct，可以不用处理，直接过滤，在最后结果中加1。如果还有其他计算，需要进行group by，可以先将值为空的记录单独处理，再和其他计算结果进行union。</li>
+<li>group by维度过小：<br>采用sum() group by的方式来替换count(distinct)完成计算。</li>
+<li>特殊情况特殊处理：<br>在业务逻辑优化效果的不大情况下，有些时候是可以将倾斜的数据单独拿出来处理。最后union回去。</li>
+</ul>
+</blockquote>
+<h4 id="HIVE动态分区设置-pt"><a href="#HIVE动态分区设置-pt" class="headerlink" title="HIVE动态分区设置(pt):"></a>HIVE动态分区设置(pt):</h4><p><code>SET hive.exec.dynamic.partition.mode=nonstrict;</code><br>HIVE设置map/ruduce内存等参数：<br><figure class="highlight routeros"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="builtin-name">set</span> mapreduce.map.memory.<span class="attribute">mb</span>=4096;</span><br><span class="line"><span class="builtin-name">set</span> mapreduce.reduce.memory.<span class="attribute">mb</span>=4096;</span><br><span class="line"><span class="builtin-name">set</span> mapreduce.map.cpu.<span class="attribute">vcores</span>=4;</span><br><span class="line"><span class="builtin-name">set</span> mapreduce.reduce.cpu.<span class="attribute">vcores</span>=4;</span><br></pre></td></tr></table></figure></p>
+<h4 id="一行转多行："><a href="#一行转多行：" class="headerlink" title="一行转多行："></a>一行转多行：</h4><p><code>lateral view</code>用于和split、explode等UDTF一起使用的，能将一行数据拆分成多行数据(或者UDF，个人比较倾斜Python的UDF)；多行转一行 ：<code>collect_set/collect_list</code>返回去重的元素数组。</p>
+<h4 id="小文件的合并"><a href="#小文件的合并" class="headerlink" title="小文件的合并:"></a>小文件的合并:</h4><p>大量的小文件导致文件数目过多，给HDFS带来压力，对hive处理的效率影响比较大，可以合并map和reduce产生的文件<br><figure class="highlight stylus"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">hive<span class="selector-class">.merge</span><span class="selector-class">.mapfiles</span> = true --是否和并 Map 输出文件，默认为 True</span><br><span class="line">hive<span class="selector-class">.merge</span><span class="selector-class">.mapredfiles</span> = false --是否合并 Reduce 输出文件，默认为 False</span><br><span class="line">hive<span class="selector-class">.merge</span><span class="selector-class">.size</span><span class="selector-class">.per</span><span class="selector-class">.task</span> = <span class="number">256</span>*<span class="number">1000</span>*<span class="number">1000</span> --合并文件的大小</span><br></pre></td></tr></table></figure></p>
+<p>注释：做项目中导数据时候要求<strong>hive中表文件存储为一个文件</strong>，还可以使用<strong>ORDER BY 1</strong>，这样只存在一个reduce，产生一个文件。</p>
+<h4 id="中间表使用："><a href="#中间表使用：" class="headerlink" title="中间表使用："></a>中间表使用：</h4><p>在做项目中经常会重复使用中间表，但是又不想建立一个物理表，这时候可以使用<code>WITH table_name AS () SELECT ... FROM  ...</code><br>例子:<br><figure class="highlight sql"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line">WITH hh</span><br><span class="line">AS </span><br><span class="line">(<span class="keyword">SELECT</span> <span class="keyword">ID</span> <span class="keyword">FORM</span> Dept <span class="keyword">WHERE</span> <span class="keyword">name</span> <span class="keyword">like</span> <span class="string">'%苏州%'</span></span><br><span class="line">) </span><br><span class="line"><span class="keyword">SELECT</span> * <span class="keyword">FROM</span> hh</span><br><span class="line">;</span><br></pre></td></tr></table></figure></p>
+<p>附：SQL执行优先级<br><img src="/img/other/sql_exe_priority.png" alt="SQL执行优先级"></p>
+<blockquote>
+<p>参考书籍：《SQL必知必会》<br>数据倾斜见<a href="https://www.cnblogs.com/ggjucheng/archive/2013/01/03/2842860.html" target="_blank" rel="noopener">博客</a></p>
+</blockquote>
+]]></content>
+      
+        <categories>
+            
+            <category> 数据分析基本工具 </category>
+            
+        </categories>
+        
+        
+        <tags>
+            
+            <tag> SQL优化 </tag>
+            
+            <tag> SQL技巧 </tag>
+            
+            <tag> Hive </tag>
+            
+        </tags>
+        
+    </entry>
+    
+    <entry>
+      <title><![CDATA[excel使用技巧]]></title>
+      <url>/2018/01/excel.html</url>
+      <content type="html"><![CDATA[<p>excel等是数据分析中的基本工具，是每一个数据相关从业者必备的技能之一，本文从此处出发，以excel函数等为入口，系统学习excel的相关技能，力求熟练并<strong>精通</strong>之，并在此处记录。</p>
+<h4 id="excel技巧"><a href="#excel技巧" class="headerlink" title="excel技巧"></a>excel技巧</h4><ol>
+<li>填充：3种方式：①拖拽填充柄 ② 双击填充柄 ③ 填充公式：选中目标单元格区域，按Ctrl确定；然后保证在全选情况下在第一个写入公式合键或者【开始-填充】下拉按钮-向下，进行填充。<ul>
+<li>分阶段填充，选中目标区域，定位/Ctrl+G组合键打开，定位空值确定；然后保证在全选情况下在第一个单元格中写入公式，然后Ctrl+Enter组合键就全部分阶段填充。</li>
+<li>选中：excel中选中第一个单元格按住shift然后点最后一个单元格，即可全部选中当前目标区域。如果行数太多，可以使用<strong>Ctrl+Shift+向下加方向键</strong>，直接定位到列有值的最后一行，如果在按一下向下方向键则选择全部行。Ctrl+Shift+空格选中当前表中有连续值的目标区域。</li>
+</ul>
+</li>
+<li>引用格式： <code>[工作簿名称]工作表名!单元格引用</code></li>
+<li>文本和数字转换，数字转特定格式文本：TEXT(A1,”特定格式”)或者&amp;””或者CONCATENATE函数拼接字符；文本转数字：数据-分列 选数字等格式或者X1(乘1)</li>
+<li>ANSI编码：<code>CHAR(10),&amp;CHAR(10)&amp;</code>;如果要在单元格中显示出2行，可用如上拼接，然后点击开始-自动换行按钮，即可换行显示。</li>
+<li>查找excel表中单元格字符，可以将该列复制到word中，查找Ctrl+H替换[!0-9]，剩下全部是数字，然后再copy至excel中。</li>
+</ol>
+<h4 id="常用函数"><a href="#常用函数" class="headerlink" title="常用函数"></a>常用函数</h4><ol>
+<li>type函数：查看单元格value类型，1-数字，2-文本，4-逻辑值，16-错误值，64-数组常量；注意当单元格为空时候，type函数会将其认为是数值0处理，结果为1</li>
+<li>大小写字母转换：小写—&gt;大写UPPER，大写-&gt;小写LOWER，首字母大写其余字母改为小写PROPER</li>
+<li>截取字符函数：从左LEFT；从右RIGHT；从单元格任意位置截取字符串：<code>MID(text,start_num,num_chars)</code>;这3个字符都是按字符数处理;</li>
+<li>对指定小数位数舍入数值：<code>FIXED(number，[decimals], [no_commas])</code>，该函数默认是2位小数；即对小数位数直接舍去；而ROUND则是根据小数位数直接四舍五入得到最后的值。</li>
+<li>查找字符<code>FIND(find_test, within_text,[start_num])</code>,返回从左到右方向第一次出现的位置；不存在则返回#VALUE；SEARCH函数语法类似，不区分大小写，允许使用通配符，但是FIND区分大小写，并不允许使用通配符；</li>
+<li><code>SUBSTITUTE(text,old_text,new_text,[instance_num])</code>替换字符或字符串：第一个参数text是需要替换其中字符的文本或者单元格引用，第二个参数old_text是需要替代的文本；第三个参数new_text是用于替换old_text的文本，第四个参数可选，指定要替换第几次出现的旧字符串。<br><code>REPLACE(old_text,start_num,num_chars,new_text)</code>函数-将部分文本字符串替换为不同的文本字符串:例如<code>REPLACE(B2,4,4,&quot;****&quot;)</code></li>
+<li>TEXT函数：格式化文本：<code>TEXT(value, format_text)</code>;<br>format_text格式化代码：<ul>
+<li>3个条件区段，并用半角分号(;)间隔;如下：<code>[&gt;0];[&lt;0];[=0]</code></li>
+<li>2个条件区段，并用半角分号(;)间隔;如下：<code>[&gt;0];[&lt;0]</code></li>
+<li><strong>自定义条件</strong>:<br>4区段：<code>[条件1];[条件2];[不满足条件的其他部分];[文本]</code>;<br>3区段：<code>[条件1];[条件2];[不满足条件]</code>;<br><code>=TEXT(B2,&quot;[&gt;85]良好;[&gt;75]合格;不合格&quot;)</code><br>2区段：<code>[条件];[不满足条件]</code></li>
+<li>实例：<code>=TEXT(TEXT(EDATE(TEXT(A$3,&quot;0!-00&quot;),ROW(A1)-1),&quot;emm&quot;),&quot;[&gt;&quot;&amp;A$6&amp;&quot;] ;0&quot;)</code>;EDATE计算出”2011-09”以后的指定月份的日期，然后根据ROW(A1)-1来生成来连续的区间的月份。<br><img src="/img/other/text生产指定区间的日期.png" alt="text"> </li>
+<li>利用TEXT函数将日期转换成为中文格式的月份：<code>=TEXT(A2,&quot;[DBnum1]m月&quot;)</code>  格式有yyyymmdd</li>
+<li>TEXT格式化代码： 0代表原先值，!0代表0；<br>WEEKDAY函数算出是周几,然后减5,周六/日则为1，2；否则负数和0强制为0，以下为实现函数公式:<br><code>TEXT(WEEKDAY(DATE(2016,A3,20),2)-5,&quot;0;!0;!0&quot;)</code></li>
+</ul>
+</li>
+<li>逻辑判断：AND、OR与OR函数，例如<code>=IF(AND(B2=&quot;一线&quot;, c2&gt;10), &quot;是&quot;,&quot;否&quot;)</code>注意逻辑函数的写法</li>
+<li>常用的IS函数：<ul>
+<li>ISBLANK函数：是否空格</li>
+<li>ISERROR函数：值为任意错误值</li>
+<li>ISNA函数：值为#N/A错误值</li>
+<li>ISNUMBER函数：值为数值</li>
+<li>ISNONTEXT函数：值为不是文本的任一项</li>
+<li>ISTECT函数：值为文本</li>
+<li>ISEVEN函数：数字为偶数</li>
+<li>ISODD函数：数字为奇数</li>
+</ul>
+</li>
+<li>转换和公约/倍数:<ul>
+<li>弧度和角度转换：a. 弧度转化为角度：DEGREES(angle)  b. 角度转化为弧度：RADIANS(angle)</li>
+<li>最大公约数：<code>GCD(number1,[number2],..)</code></li>
+<li>返回两个或多个整数的最大公约数、最小公倍数:<code>LCM(number1,[number2],..)</code></li>
+<li>返回两个或多个整数的最小公倍数： MOD 取余函数<code>MOD(number,divisor)</code></li>
+</ul>
+</li>
+<li><p>取舍函数：CEILING函数：向上舍入；FLOOR函数：向下舍去；注意：这两个函数都是按照舍入基数的整数倍进行取舍；格式如下：significance为舍入基数</p>
+<figure class="highlight stylus"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="title">CEILING</span><span class="params">(number,[significance])</span></span></span><br><span class="line"><span class="function"><span class="title">FLORR</span><span class="params">(number,[significance])</span></span></span><br></pre></td></tr></table></figure>
+</li>
+<li><p>判断是否为闰年：转换成日期的年份，与字符串”-2-29”连接，生产”2014-2-29”样式的字符串，如果该日期不存在，则将会按文本进行处理。字符串前加上负号，如果字符串是日期，则返回一个负数，否则返回错误值”#CALUE!”。在用<strong>COUNT</strong>判断是否为数字，如果是则为闰年，否则平年。</p>
+<figure class="highlight lisp"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">IF(<span class="name">COUNT</span>(<span class="name">-</span>(<span class="name">YEAR</span>(<span class="name">A2</span>)&amp;<span class="string">"-2-29"</span>)),<span class="string">"闰年"</span>,<span class="string">"平年"</span>)</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>日期函数：</p>
+<ul>
+<li>计算指定月份的日期：开始日期之后几个月的日期<code>EDATE(start_date, months)</code></li>
+<li>EOMONTH 函数返回指定月数之前或者之后的最后一天的日期。DAY返回某个日期在一个月的天数。 例子：计算本月总天数<code>=DAY(EOMONTH(TODAY(),0))</code></li>
+<li><p>DATEIF函数：计算两个日期之间的天数、月数或者年数</p>
+  <figure class="highlight stylus"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="title">DATEDIF</span><span class="params">(start_date, end_date, unit)</span></span></span><br><span class="line">#unit：Y-年，M-月，D-天数，MD日期中的天数差-忽略年月，YM日期中的月数差-忽略日年，YD日期中的天数差，忽略年</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>DATESTRING函数：返回指定日期的中文短日期</p>
+</li>
+<li>星期相关函数：WEEKDAY函数返回某个日期的一周中的第几天。<br>  <code>WEEKDAY(serial_number,[return_type])</code>:return_type: 1-默认/数字1(星期日)~7(星期六); 2-数字0(一)~7(日)</li>
+<li><p>TEXT函数第二参数：</p>
+  <figure class="highlight excel"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">= <span class="built_in">TEXT</span>(<span class="symbol">B1</span>, <span class="string">"aaaa"</span>) #返回中文如<span class="string">"星期六"</span></span><br><span class="line">= <span class="built_in">TEXT</span>(<span class="symbol">B1</span>, <span class="string">"aaa"</span>)  #返回中文星期简写如<span class="string">"六"</span></span><br><span class="line">= <span class="built_in">TEXT</span>(<span class="symbol">B1</span>, <span class="string">"dddd"</span>) #返回英文<span class="string">"Saturday"</span></span><br><span class="line">= <span class="built_in">TEXT</span>(<span class="symbol">B1</span>, <span class="string">"ddd"</span>)  #返回英文<span class="string">"Sat"</span></span><br></pre></td></tr></table></figure>
+</li>
+<li><p>WEEKNUM函数：返回指定日期属于全年的第几周 <code>WEEKNUM(serial_number, [return_type])    #return_type默认为2</code></p>
+</li>
+</ul>
+</li>
+<li><p>使用数组公式：判断日期所在月份有几个星期日<br><strong>数组公式</strong>：不用填入<code>{}</code>;F2进入编辑，编辑好后，再使用<code>&lt;Ctrl+Shift+Enter&gt;</code>进行数组公式计算。<br>a) 首先提取出年月，使用&amp;拼接出<code>{2015-2-1,2015-2-2...,2015-2-31}</code>数组。<br>b) 使用MOD函数除以7，周日的情况下为1。如果对于2015-2-30等不存在的日期则会返回错误值。<br>c) 最后=1则周日情况下返回TRUE，否则(包括不等于1和错误值)则为0或者错误值。0除以TRUE为0，其他返回错误值#DIV/0！或者#VALUE！。<br>d) 最后COUNT函数统计结果。 公式如下：<br><code>=COUNT(0/(MOD(TEXT(A2,&quot;e-m&quot;)&amp;-ROW($1:$31),7)=1))</code><br><img src="/img/other/判断日期所在月份有几个星期日.png" alt="星期使用函数"></p>
+</li>
+<li><p>LOOKUP函数：查询列表中小与或者等于目标值的最大值匹配，然后在第三参数中相同位置的值</p>
+<figure class="highlight stylus"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line"><span class="function"><span class="title">LOOKUP</span><span class="params">(lookup_value,lookup_vector,[result_vector])</span></span></span><br><span class="line">#lookup_vector查询范围，result_vector第三参数中对应的位置的值</span><br><span class="line"><span class="function"><span class="title">LOOKUP</span><span class="params">(lookup_value,array)</span></span></span><br></pre></td></tr></table></figure>
+<p>返回A列最后一个非空单元格内容</p>
+<figure class="highlight excel"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">=<span class="built_in">LOOKUP</span>(<span class="number">1</span>,<span class="number">0</span>/(<span class="symbol">A:A</span>&lt;&gt;<span class="string">""</span>),<span class="symbol">A:A</span>)</span><br><span class="line">#本写法就构建一个由<span class="number">0</span>和错误值#DIV/!组成的数组，再用比<span class="number">0</span>大的<span class="number">1</span>作为查找值，即可查找结果区域中最后一个满足条件的记录。</span><br><span class="line">#经典用法：=<span class="built_in">LOOKUP</span>(<span class="number">1</span>,<span class="number">0</span>/(条件),目标区域或数组)</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>INDIRECT引用函数： <code>INDIRECT(ref_text,[a1])</code> 注: ref_text可以是文本，也可以是不同区域，例如<code>INDIRECT({&quot;C1:C10&quot;,&quot;F2:F10&quot;})</code></p>
+</li>
+<li>返回指定单元格/区域的行号ROW() 和列号COLUMN()</li>
+<li><p>基本查找函数VLOOKUP：查询值要求必须位于查询区域中的首列</p>
+<figure class="highlight shell"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line">VLOOKUP(lookup_value,table_array,col_index_num,[rank_lookup])</span><br><span class="line"><span class="meta">#</span><span class="bash"> 第一参数查找值，第二参数查找区域</span></span><br><span class="line"><span class="meta">#</span><span class="bash"> 第三参数指定返回查询区域中的第几列值，超过查询列的总列数，将返回错误值<span class="comment">#REF，小于1返回错误值#VALUE</span></span></span><br><span class="line"><span class="meta">#</span><span class="bash"> 第四参数，0或FASLE为精确匹配方式，支持无序查找；1或者TRUE或省略，则使用的近似匹配方式，同时要求查询区域的首列按升序排序</span></span><br></pre></td></tr></table></figure>
+<p>VLOOKUP一些技巧：</p>
+<pre><code>a) 逆向查询，通过CHOOSE函数绕开查询值位于查询区域的首列：``=VLOOKUP(F5,CHOOSE({1,2},D2:D10,B2:B10),2,0)``
+    CHOOSE函数使用常量数组{1,2}将查询值所在的D2:D10和返回值B2：B10整合成一个新的两列多行的内存数组
+    CHOSSE可以根据指定数字序号返回与其对应的数据值结果
+b) 使用数组查询多个内容：选中结果区域``=VLOOKUP(G2,A:E,{3,5},)}`` 然后``&lt;Ctrl+Shift+Enter&gt;``
+</code></pre></li>
+<li>MATCH函数：在单元格区域中搜索指定项，返回该项在单元格区域中的相对位置<code>MATCH(lookup_value,lookup_array,[match_type])</code><br>match_type第三参数，0、1或者省略、-1分别代表精确匹配或者升序查找，降序查找模型</li>
+<li><p>COUNT函数：<code>COUNT(value1,[..value2]..</code>用于计算包含数字的单元格以及参数列表中数字的个数<br>COUNT实例-计算考核得分大于等于3的达标率</p>
+<figure class="highlight clojure"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">&#123;=TEXT(<span class="name">COUNT</span>(<span class="number">0</span>/(<span class="name">C2:C11&gt;=3</span>))/COUNT(<span class="name">C2:C11</span>),<span class="string">"0.00%"</span>)&#125;</span><br></pre></td></tr></table></figure>
+<p>计算范围中不为空的单元格个数<code>COUNTNTA(value1,[value2],..)</code><br>计算空白单元格个数<code>COUNTBLANK(range)</code><br>判断某一年是否是闰年和平年 <code>IF(COUNT(-(YEAR(A2)&amp;&quot;-2-29&quot;)),&quot;闰年&quot;,&quot;平年&quot;)</code></p>
+</li>
+<li><p>COUNTIF函数：统计满足条件的单元格的数量<code>COUNTIF(range,criteria)</code>, criteria可以使用通配符？-任意单个字符，*任何字符；如果要查找问号或星号，则在字符前输入波浪符号”~”,如：<code>~？</code><br>例子:检查重复身份证号码</p>
+<figure class="highlight excel"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">=<span class="built_in">IF</span>(<span class="built_in">COUNTIF</span>(B$<span class="symbol">2:B</span>$<span class="number">11</span>,<span class="symbol">B2</span>&amp;<span class="string">"*"</span>)&gt;<span class="number">1</span>,<span class="string">"是"</span>,<span class="string">""</span>)</span><br><span class="line">#excel的数字精度为<span class="number">15</span>位，而身份证位<span class="number">18</span>位，后<span class="number">3</span>位视为<span class="number">0</span>，所以<span class="built_in">COUNTIF</span>函数的cirteria部分使用<span class="symbol">B2</span>&amp;<span class="string">""</span>,转化为文本格式。</span><br></pre></td></tr></table></figure>
+</li>
+<li><p>频数统计函数FREQUENCY：统计数值在某个区域内的出现平吕，返回一个垂直数组</p>
+<figure class="highlight shell"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">FREQUENCY(data_array,bins_array)</span><br><span class="line"><span class="meta">#</span><span class="bash">data_array一组数值或者数值引用</span></span><br><span class="line"><span class="meta">#</span><span class="bash">bins_array间隔数组，可以无序，统计是按照间隔点的数值升序排列</span></span><br></pre></td></tr></table></figure>
+</li>
+<li><p>众数MODE函数<br>均值函数AVERAGE函数<br>数组中对应元素相乘SUMPRODUCT函数：<code>SUMPRODUCT(array1,[array2],[array3],...)</code><br>求和函数SUM，同理也有SUMIF函数</p>
+</li>
+</ol>
+<h4 id="快捷键"><a href="#快捷键" class="headerlink" title="快捷键"></a>快捷键</h4><ol>
+<li>Ctrl+1打开单元格格式 </li>
+<li>Ctrl+L /Ctrl+T创建表格，这里指套用格式。</li>
+<li>Alt+= 自动求和</li>
+<li>Ctrl+`(在Tab键之上)组合键可以直接显示公式和普通模式的切换</li>
+<li>使用名称：公式-&gt;名称管理器 或者 Ctrl+F3</li>
+</ol>
+<hr>
+<p>2018年2月22日完</p>
+<blockquote>
+<p>《Excel 函数与公式应用大全》</p>
+</blockquote>
+]]></content>
+      
+        <categories>
+            
+            <category> 数据分析基本工具 </category>
+            
+        </categories>
+        
+        
+        <tags>
+            
+            <tag> excel </tag>
+            
+        </tags>
+        
+    </entry>
+    
+    <entry>
+      <title><![CDATA[金融模型-评分卡（一）]]></title>
+      <url>/2018/01/%E9%87%91%E8%9E%8D%E6%A8%A1%E5%9E%8B-%E8%AF%84%E5%88%86%E5%8D%A1%EF%BC%88%E4%B8%80%EF%BC%89.html</url>
+      <content type="html"><![CDATA[<h4 id="一-数据描述"><a href="#一-数据描述" class="headerlink" title="一. 数据描述"></a><strong>一</strong>. 数据描述</h4><ol>
+<li>每个候选预测变量的统计特性和<strong>分布</strong><br> 1） 矩，如均值、众数和标准差<br> 2） 变化率的基本统计指标<br> 3） 均值，分位数：如第一和第三个四分位数：变量中某值的频率，并计算累计频率<br> 4） 极端值，最大值和最小值；范围<ul>
+<li>如何判定极端值：根据<strong>差异</strong>；<br>① 正常取值范围<br>② 建立具有特定函数形式的模型，并用数据拟合该模型，严重偏离并视为极端值<br>③ 使用聚类算法分成很多较小的子集，即成簇；只包含最小数量的观测值的簇被认定为极端值<br>④ 依靠决策树发现包含少量观测值的持续节点</li>
+<li>处理：<br>① 大多数情况极端值值或被删除或被重置为总体中的经典值&emsp;<br>② 极端值的数量特别大时候进行分群(segments)</li>
+</ul>
+</li>
+<li>变量间是否存在关联性或相关性<br> 1）建模的变量之间不能有较强的相关性，特别是logistic回归方法，最好使用因子分析和主成分分析进行降维找出最适合的变量建模。<br> 2）相关性：皮尔森相关系数、斯皮尔曼相关系数(取值的等级：顺序)<br> 皮尔森相关系数反应两个变量相似程度，变量的标准差不能为0，数据服从正态分布，数据至少在逻辑范围内是等距的。（有线性相关的概念）<br> 斯皮尔曼相关系数是无参数（与分布无关）的检验方法，度量变量之间的联系的强弱。</li>
+<li>变量中的缺失值和极端值，并评估其影响</li>
+<li>金融中的正常和违约的分布情况<br> 变量分段后统计违约和正常的频率</li>
+</ol>
+<h4 id="二-建模方法-逻辑回归logistic"><a href="#二-建模方法-逻辑回归logistic" class="headerlink" title="二. 建模方法-逻辑回归logistic"></a><strong>二</strong>. 建模方法-<strong>逻辑回归</strong>logistic</h4><h5 id="构建logistic回归模型"><a href="#构建logistic回归模型" class="headerlink" title="构建logistic回归模型:"></a>构建logistic回归模型:</h5><script type="math/tex; mode=display">h_θ(x)= \frac{1}{1+e^{(-β^Tx)}}</script><p>其中，</p>
+<script type="math/tex; mode=display">y= \frac{1}{1+e^{(-x)}}</script><p>被称为sigmoid函数。<br>sigmoid的函数图形如下：<br><img src="/img/finance/sigmoid.png" alt="sigmoid"> </p>
+<h5 id="模型拟合统计量"><a href="#模型拟合统计量" class="headerlink" title="模型拟合统计量"></a>模型拟合统计量</h5><p>评估模型中所有自变量对模型的贡献：（似然函数值）</p>
+<script type="math/tex; mode=display">
+-2ln(L_1)= -2[y_iln(π_i) + (1-y_i)ln(1-π_i)]</script><p>同时，为惩罚包含大量自变量的模型，制定了两个标准-赤池信息准则(AIC)和贝叶斯信息尊则(BIC)/又称舒尔茨准则(SC)：<br>1) AIC: </p>
+<script type="math/tex; mode=display">AIC = -2ln(L1) + 2r</script><p>注：r是对模型复杂性惩罚机制，表现为模型参数数量r的形式，r是样本规模对数的比例<br>2) SC/BIC：</p>
+<script type="math/tex; mode=display">SC = -2ln(L1) + rln(n)</script><h5 id="粗分类和WOE"><a href="#粗分类和WOE" class="headerlink" title="粗分类和WOE"></a>粗分类和WOE</h5><p>1) 名义变量的WOE<br>证据权重(Weight of Evidence,WOE)转换可以将logistic回归模型转变为标准的评分卡格式。其实，WOE是对原始变量的一种编码形式，主要是对变量进行分组（又称为离散化、分箱等）处理，计算WOE值。<br>对于一个名义(类别)变量的类别i，或连续变量的某个段，WOE定义为</p>
+<script type="math/tex; mode=display">
+WOE_i = ln[\frac{Bad\ Distribution_i}{Good\ Distribution_i}]</script><p>同时正常和违约的分布分别定义为：</p>
+<script type="math/tex; mode=display">
+Good Distibution_i = \frac{Number\ of\ Good_i}{Total\ Number\ of\ Good}</script><script type="math/tex; mode=display">
+Bad Distibution_i = \frac{Number\ of\ Bad_i}{Total\ Number\ of\ Bad}</script><p>最终，使用n代表数量，0代表违约，1代表正常，.代表全部；即类别$x_i$的WOE可以表示为：</p>
+<script type="math/tex; mode=display">
+WOE(x_i) = ln\left[ \frac{n_{i0}/n_{.0}}{n_{i1}/n_{.1}} \right]</script><p>从如上公式可以发现WOE就是第i类中违约与正常的比率与整个样本中违约与正常比率的比值的对数，其目的是<font color="red">衡量第i类对违约与正常的比率的影响程度，即第i类（每一组中）自变量对目标变量的影响</font>。</p>
+<ul>
+<li>注意：该类别中的违约和正常的比值和全部样本中的比值的比值，由于外边有对数函数（ln），因此就是在该类别中的违约和正常的比值，和全部样本的差异（ln：里除外减，减去）；这种差异越大，这个类别/分组的样本的正确区分的可能性就越大。</li>
+</ul>
+<p>因此，将名义变量x的WOE重新表述为:</p>
+<script type="math/tex; mode=display">WOE(x) = \delta_1WOE_1+ \delta_2WOE_2 + ... + \delta_rWOE_r</script><p>其中，$\delta_1 … \delta_r$是二元虚拟变量，即对于所有的$j=1,….,r$，如果x的取值为第j类（$x_j$），则$x_j=1$；否则，$x_j = 0$。<br>因此，针对名义变量，用一个变量的WOE代表该变量的各个类别，得到唯一的模型参数WOE(x);构建模型的变量可以视情况用其WOE值代替。<br>2) 连续变量的WOE<br>将数值分段，得到新的分段数据用于WOE计算。使用方法有决策树算法等。</p>
+<h5 id="信息值-Information-Value-IV"><a href="#信息值-Information-Value-IV" class="headerlink" title="信息值 Information Value(IV)"></a>信息值 Information Value(IV)</h5><p>IV衡量一个变量的信息量（和信息熵相似，但趋势未必一致），其决定自变量对目标变量的影响程度。因此IV可用于自变量筛选,IV值越大，改变了对模型的目标变量贡献越大，越应该被选入构建模型的变量列表中。</p>
+<script type="math/tex; mode=display">
+IV_i = (Bad Distibution_i - Good Distibution_i) * ln(\frac{Bad Distibution_i}{Good Distibution_i})</script><script type="math/tex; mode=display">IV = \sum_{k=0}^nIV_i</script><p>IV有如下特点：</p>
+<pre><code>1. 对于某个变量的分组，违约/正常的比率与整体的样本的违约/正常的比率相差越大，IV越高，否则IV越小
+2. 极端情况，IV=0，即分组下和整体的样本情况下违约/正常的比率相等。
+2. IV的取值范围为：[0,+∞)
+</code></pre><h5 id="变量选择的方法"><a href="#变量选择的方法" class="headerlink" title="变量选择的方法"></a>变量选择的方法</h5><p>现有的方法：使用所有变量、正向选择:添加最优变量、逆向选择：使用所有变量对模型拟合，逐步移除最差的变量、<font color="red"> 逐步选择：正向+逆向的结合，正向增加最有的变量，逆向选择移出最差的变量。</font>当前常用的做法。</p>
+<h5 id="模型评估"><a href="#模型评估" class="headerlink" title="模型评估"></a>模型评估</h5><p>评估方法：混合矩阵，ROC曲线，<br>灵敏度：</p>
+<script type="math/tex; mode=display">Sensitivity = \frac{TP}{TP + FN}</script><p>特殊性：</p>
+<script type="math/tex; mode=display">Specificity = \frac{TN}{TN + FP}</script><h4 id="三-评分卡刻度和实施"><a href="#三-评分卡刻度和实施" class="headerlink" title="三. 评分卡刻度和实施"></a><strong>三</strong>. 评分卡刻度和实施</h4><p>标准评分卡格式基本上都是每个变量遵循一系列IF-THEN法则。总分是评分卡所有变量的贡献之和。<br>违约的概率是p，那正常的概率为1-p，因此，</p>
+<script type="math/tex; mode=display">
+Odds = \frac{p}{1-p}</script><script type="math/tex; mode=display">
+p = \frac{Odds}{1 + Odds}</script><p>评分卡的分值表示为：</p>
+<script type="math/tex; mode=display">
+Score = A - Blog(Odds)</script><p>其中，A和B为常数，违约概率越低，得分越高。</p>
+<script type="math/tex; mode=display">log(Odds) = \beta_0 + \beta_1x_1 + \beta_2x_2 + ... + \beta_px_p</script><p>其中，用于建模参数拟合模型可以得到模型参数$\beta_0$(截距),$\beta_1,\beta_2, …, \beta_p$<br>假设</p>
+<ul>
+<li>在某个特定的比率$\theta_0$设定特定的预期分值$P_0$</li>
+<li>制定$\theta_0$比率减小一半时翻番的分数值(PDO)<script type="math/tex; mode=display">P_0 = A - Blog(\theta_0)</script><script type="math/tex; mode=display">P_0 + PDO = A - Blog(\frac{\theta_0}{2})</script>解出：<script type="math/tex; mode=display">B = \frac{PDO}{log(2)}</script><script type="math/tex; mode=display">A = P_0 + Blog(\theta_0)</script>此外，设置临界值水平：阈值</li>
+</ul>
+<h4 id="四-其他"><a href="#四-其他" class="headerlink" title="四. 其他"></a><strong>四</strong>. 其他</h4><ul>
+<li>检测报告：评估和监测评分卡表现的情况。</li>
+<li>拒绝演绎：对于不符合条件的直接拒绝，并给出具体原因。</li>
+</ul>
+<blockquote>
+<p>参考资料：</p>
+<ol>
+<li>信用卡风险评分卡研究基于SAS的开发与实施 Mamdouh著</li>
+</ol>
+</blockquote>
+]]></content>
+      
+        <categories>
+            
+            <category> 信贷 </category>
+            
+        </categories>
+        
+        
+        <tags>
+            
+            <tag> 评分卡 </tag>
+            
+            <tag> 逻辑回归 </tag>
+            
+            <tag> logistic </tag>
+            
+            <tag> 信用卡评分 </tag>
+            
+        </tags>
+        
+    </entry>
+    
+    <entry>
+      <title><![CDATA[2018计划]]></title>
+      <url>/2018/01/2018%E8%AE%A1%E5%88%92.html</url>
+      <content type="html"><![CDATA[<h3 id="2018计划"><a href="#2018计划" class="headerlink" title="2018计划"></a>2018计划</h3><h4 id="1-分析报告：a"><a href="#1-分析报告：a" class="headerlink" title="1.分析报告：a"></a>1.分析报告：a</h4><ul>
+<li>爬虫：数据获取,大众点评.美团/头条数据</li>
+<li>excel ppt精通使用，软实力excel做熟练的数据分析。<blockquote>
+<p>具有做一个完整的<code>分析报告</code>的能力，从数据的角度诠释一个行业。运营一个<strong>博客</strong><del>公众号</del>之类，<strong>维持周更</strong>，行业内具有一定的影响力。&emsp;&emsp;&emsp;</p>
+</blockquote>
+</li>
+</ul>
+<h4 id="2-机器学习"><a href="#2-机器学习" class="headerlink" title="2.机器学习"></a>2.机器学习</h4><ul>
+<li>自然语言处理(NLP) b</li>
+<li>以tensflow为代表的深度学习</li>
+<li>常用的算法：SVM 集成模型(Ensemble Models)等</li>
+<li>信贷模型：信用卡模型等 b</li>
+<li>++MOOC课程++：至少2门<br>  <strong>神经网络和深度学习</strong><br>  <strong>机器学习技法-国立台湾大学</strong><br>  <strong>机器学习-李弘毅2017Fall</strong><blockquote>
+<p>==理论推导==，==编程实现==，<strong>实践很重要</strong></p>
+</blockquote>
+</li>
+</ul>
+<h4 id="3-其他事宜"><a href="#3-其他事宜" class="headerlink" title="3.其他事宜"></a>3.其他事宜</h4><ul>
+<li>以前买的书看完-ML/金融/心理学/中医</li>
+<li>少说多做，慎言慎行，学会拒绝，坚守本心。</li>
+<li>培养摄影爱好，看不一样的世界。</li>
+<li>金融/经济/<strong>理财</strong>/<strong>心理学</strong>方面的知识<br>截至时间 a:一季度3月 b:二季度6月 c:3季度9月 d：4季度12月 大写提前一个月</li>
+</ul>
+<h4 id="4-书籍："><a href="#4-书籍：" class="headerlink" title="4.书籍："></a>4.书籍：</h4><ol>
+<li>待看书籍<ul>
+<li><del>《<strong>统计自然语言处理基础</strong>》</del> 2018-01-29 注：略读</li>
+<li>《<strong>PYTHON自然语言处理中文翻译/NLTK</strong>》</li>
+<li>《模式识别与机器学习》</li>
+<li>《深度学习》</li>
+<li><del>《<strong>信用风险评分卡研究</strong>》</del>  2018-01-09</li>
+<li><del>《流畅的python2015》</del>  2018-02-01 略读<blockquote>
+<p>流畅的python略读了前7章，该书适合作为工具书，以后有需求可以对某一个块知识点进行研读；涉及对象、迭代器、多线程、设计模式等</p>
+</blockquote>
+</li>
+<li>《Spark》等/</li>
+<li>《Java编程基础》第10版上</li>
+<li><strong>《hands-On Machine Learning with Scikit-learn &amp; TensorFlow》</strong></li>
+<li><del><strong>《推荐系统 技术、评估及高效算法》</strong></del> 2018-03-14 看了前6章，略读，看不懂</li>
+</ul>
+</li>
+<li>excel函数与公式应用大全/VBA</li>
+<li>“错误”的行为/ 国富论上 下</li>
+<li>摄影书籍提高审美</li>
+</ol>
+<h3 id="2017回顾"><a href="#2017回顾" class="headerlink" title="2017回顾"></a>2017回顾</h3><ol>
+<li>顺利毕业, 工作，对业务数据有更深入的理解。</li>
+<li>阅读完书籍：看书：<ul>
+<li>ML：《机器学习周志华，统计学习方法李航，数据挖掘：概念与技术，Effective Python，tensflow谷歌，excel2013透视表，精通Python网络爬虫，用Python写网络爬虫，利用Python进行数据分析》</li>
+<li>F:《生活中的投资学，基金》</li>
+<li>S:《抗得住世界就是你的, 浮生六记》</li>
+</ul>
+</li>
+<li>MOOC: ML-NG</li>
+<li>信贷模型小白</li>
+<li>成为摄影小白<h4 id="2017总结：工作效率不高，很多想做的事情没有做下去，实践并不多，执行不彻底。"><a href="#2017总结：工作效率不高，很多想做的事情没有做下去，实践并不多，执行不彻底。" class="headerlink" title="2017总结：工作效率不高，很多想做的事情没有做下去，实践并不多，执行不彻底。"></a>2017总结：工作效率不高，很多想做的事情没有做下去，实践并不多，执行不彻底。</h4></li>
+</ol>
+<h3 id="纪实"><a href="#纪实" class="headerlink" title="纪实"></a>纪实</h3><ul>
+<li>2018Q1：涉及跨年，年前书差不多了，excel和爬虫要在这个Q1解决，然后一门MOOC（网易云课堂）。<br>记录时间：2018-02-01 21点</li>
+</ul>
+]]></content>
+      
+        <categories>
+            
+            <category> 规划 </category>
+            
+        </categories>
+        
+        
+        <tags>
+            
+            <tag> 计划 </tag>
+            
+        </tags>
+        
+    </entry>
+    
+    <entry>
+      <title><![CDATA[博客第一篇]]></title>
+      <url>/2018/01/fisrtblog.html</url>
+      <content type="html"><![CDATA[<h2 id="开篇"><a href="#开篇" class="headerlink" title="开篇"></a>开篇</h2><p>&emsp;2018-01-01开通博客，希望新年新气象！<br>&emsp;同时也希望自己不断努力，不要放弃，实现自己价值。</p>
+]]></content>
+      
+        
+    </entry>
+    
+  
+  
 </search>
